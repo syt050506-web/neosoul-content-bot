@@ -2,6 +2,7 @@ import path from 'node:path';
 import type { Client } from 'discord.js';
 import type { EventModule } from '../types/event.js';
 import { directoryFromMetaUrl, importModule, listRuntimeModules } from '../utils/moduleFiles.js';
+import { logger } from '../utils/logger.js';
 
 export const loadEvents = async (client: Client): Promise<void> => {
   const eventDirectory = directoryFromMetaUrl(import.meta.url);
@@ -22,5 +23,6 @@ export const loadEvents = async (client: Client): Promise<void> => {
     } else {
       client.on(event.name, listener);
     }
+    logger.info(`Registered Discord event listener: ${String(event.name)}.`);
   }
 };

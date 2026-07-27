@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import { initializeDatabase } from '../database/index.js';
 import { GuildSettingsService, type GuildSettings } from './GuildSettingsService.js';
 import { ParserService, type ParsedXPost } from './ParserService.js';
-import { PointService } from './PointService.js';
+import { logger } from '../utils/logger.js';
 
 // Malaysia is UTC+8 year-round. SQLite date modifiers do not accept IANA names.
 const MALAYSIA_UTC_OFFSET = '+8 hours';
@@ -30,6 +30,15 @@ export interface SubmissionMessage {
 
 interface RejectedResult {
   outcome: 'REJECTED';
+  code:
+    | 'NO_URL'
+    | 'MULTIPLE_URLS'
+    | 'INVALID_STATUS_URL'
+    | 'NO_BINDING'
+    | 'USERNAME_MISMATCH'
+    | 'DUPLICATE_POST'
+    | 'DUPLICATE_MESSAGE'
+    | 'DAILY_LIMIT';
   reason: string;
   todaySubmissions: number;
   dailyLimit: number;
@@ -39,23 +48,20 @@ export type SubmissionResult =
   | { outcome: 'IGNORED' }
   | RejectedResult
   | {
-      outcome: 'APPROVED';
+      outcome: 'PENDING';
+      submissionId: number;
       todaySubmissions: number;
       dailyLimit: number;
       xUsername: string;
-      pointsEarned: number;
     };
 
 export class SubmissionService {
-  private readonly pointService: PointService;
   private readonly settingsService: GuildSettingsService;
 
   public constructor(
     private readonly database: Database.Database = initializeDatabase(),
     private readonly parserService: ParserService = new ParserService(),
-    pointService?: PointService,
   ) {
-    this.pointService = pointService ?? new PointService(database);
     this.settingsService = new GuildSettingsService(database);
   }
 
@@ -64,7 +70,6 @@ export class SubmissionService {
     if (
       !message.guildId ||
       message.authorIsBot ||
-      message.isWebhook ||
       !settings?.submissionChannelId ||
       settings.submissionChannelId !== message.channelId
     ) {
@@ -72,44 +77,51 @@ export class SubmissionService {
     }
 
     if (this.isDuplicateMessage(message.guildId, message.messageId)) {
-      return { outcome: 'IGNORED' };
+      logger.info('Submission rejected: duplicate Discord message ID.');
+      return this.rejected(
+        message.guildId,
+        message.discordUserId,
+        'DUPLICATE_MESSAGE',
+        'This Discord message has already been submitted.',
+      );
     }
 
     const parsed = this.parserService.parseXPost(message.content);
     if (!parsed.ok) {
+      logger.info(`Submission rejected: ${this.parserDiagnostic(parsed.reason)}.`);
       return this.rejected(
         message.guildId,
         message.discordUserId,
+        parsed.reason,
         this.parserFailureReason(parsed.reason),
       );
     }
+    logger.info(`Parsed X username: ${parsed.post.username}.`);
+    logger.info(`Parsed post ID: ${parsed.post.postId}.`);
 
     const binding = this.getBinding(message.guildId, message.discordUserId);
     if (!binding) {
+      logger.info('Submission rejected: user has no X binding.');
       return this.rejected(
         message.guildId,
         message.discordUserId,
+        'NO_BINDING',
         '❌ Please bind your X account first.',
       );
     }
+    logger.info(`Bound X username: ${binding}.`);
 
     if (this.isDuplicatePost(message.guildId, parsed.post.postId)) {
+      logger.info('Submission rejected: duplicate post ID.');
       return this.rejected(
         message.guildId,
         message.discordUserId,
+        'DUPLICATE_POST',
         'This X post has already been submitted.',
       );
     }
 
-    if (!message.hasEmbeds) {
-      return this.rejected(
-        message.guildId,
-        message.discordUserId,
-        'The X post preview is missing.',
-      );
-    }
-
-    return this.formallyReview(
+    return this.savePending(
       message.guildId,
       message.discordUserId,
       message.messageId,
@@ -130,7 +142,7 @@ export class SubmissionService {
     return binding?.username ?? null;
   }
 
-  private formallyReview(
+  private savePending(
     guildId: string,
     discordUserId: string,
     messageId: string,
@@ -141,16 +153,30 @@ export class SubmissionService {
     const review = this.database.transaction((): SubmissionResult => {
       // Repeat both checks inside the write transaction to close the concurrency window.
       if (this.isDuplicateMessage(guildId, messageId)) {
-        return { outcome: 'IGNORED' };
+        logger.info('Submission rejected: duplicate Discord message ID.');
+        return this.rejected(
+          guildId,
+          discordUserId,
+          'DUPLICATE_MESSAGE',
+          'This Discord message has already been submitted.',
+        );
       }
       if (this.isDuplicatePost(guildId, post.postId)) {
-        return this.rejected(guildId, discordUserId, 'This X post has already been submitted.');
+        logger.info('Submission rejected: duplicate post ID.');
+        return this.rejected(
+          guildId,
+          discordUserId,
+          'DUPLICATE_POST',
+          'This X post has already been submitted.',
+        );
       }
 
-      const todaySubmissions = this.getTodayFormalCount(guildId, discordUserId);
+      const todaySubmissions = this.getTodaySubmissionCount(guildId, discordUserId);
       if (todaySubmissions >= settings.dailySubmissionLimit) {
+        logger.info('Submission rejected: daily limit reached.');
         return {
           outcome: 'REJECTED',
+          code: 'DAILY_LIMIT',
           reason: `You have reached today's limit of ${settings.dailySubmissionLimit} submissions.`,
           todaySubmissions,
           dailyLimit: settings.dailySubmissionLimit,
@@ -158,11 +184,12 @@ export class SubmissionService {
       }
 
       if (boundUsername.toLowerCase() !== post.username.toLowerCase()) {
-        this.insertSubmission(guildId, discordUserId, messageId, post, 'REJECTED');
+        logger.info('Submission rejected: bound username mismatch.');
         return {
           outcome: 'REJECTED',
+          code: 'USERNAME_MISMATCH',
           reason: USERNAME_MISMATCH_REASON,
-          todaySubmissions: todaySubmissions + 1,
+          todaySubmissions,
           dailyLimit: settings.dailySubmissionLimit,
         };
       }
@@ -174,30 +201,13 @@ export class SubmissionService {
         post,
         'PENDING',
       );
-      this.pointService.addSubmissionPoints(
-        guildId,
-        discordUserId,
-        submissionId,
-        settings.pointsPerSubmission,
-      );
-
-      const approval = this.database
-        .prepare(
-          `UPDATE submissions
-           SET status = 'APPROVED', reviewed_at = CURRENT_TIMESTAMP
-           WHERE id = ? AND status = 'PENDING'`,
-        )
-        .run(submissionId);
-      if (approval.changes !== 1) {
-        throw new Error('Submission approval update failed.');
-      }
 
       return {
-        outcome: 'APPROVED',
+        outcome: 'PENDING',
+        submissionId,
         todaySubmissions: todaySubmissions + 1,
         dailyLimit: settings.dailySubmissionLimit,
         xUsername: boundUsername,
-        pointsEarned: settings.pointsPerSubmission,
       };
     });
 
@@ -209,9 +219,21 @@ export class SubmissionService {
         error.code.startsWith('SQLITE_CONSTRAINT_UNIQUE')
       ) {
         if (this.isDuplicateMessage(guildId, messageId)) {
-          return { outcome: 'IGNORED' };
+          logger.info('Submission rejected: duplicate Discord message ID.');
+          return this.rejected(
+            guildId,
+            discordUserId,
+            'DUPLICATE_MESSAGE',
+            'This Discord message has already been submitted.',
+          );
         }
-        return this.rejected(guildId, discordUserId, 'This X post has already been submitted.');
+        logger.info('Submission rejected: duplicate post ID.');
+        return this.rejected(
+          guildId,
+          discordUserId,
+          'DUPLICATE_POST',
+          'This X post has already been submitted.',
+        );
       }
       throw error;
     }
@@ -262,14 +284,14 @@ export class SubmissionService {
     );
   }
 
-  private getTodayFormalCount(guildId: string, discordUserId: string): number {
+  private getTodaySubmissionCount(guildId: string, discordUserId: string): number {
     const row = this.database
       .prepare(
         `SELECT COUNT(*) AS count
          FROM submissions
          WHERE guild_id = ?
            AND discord_user_id = ?
-           AND status IN ('APPROVED', 'REJECTED')
+           AND status IN ('PENDING', 'APPROVED', 'REJECTED')
            AND date(submitted_at, '${MALAYSIA_UTC_OFFSET}') =
                date('now', '${MALAYSIA_UTC_OFFSET}')`,
       )
@@ -277,12 +299,18 @@ export class SubmissionService {
     return row.count;
   }
 
-  private rejected(guildId: string, discordUserId: string, reason: string): RejectedResult {
+  private rejected(
+    guildId: string,
+    discordUserId: string,
+    code: RejectedResult['code'],
+    reason: string,
+  ): RejectedResult {
     const { dailySubmissionLimit } = this.settingsService.get(guildId);
     return {
       outcome: 'REJECTED',
+      code,
       reason,
-      todaySubmissions: this.getTodayFormalCount(guildId, discordUserId),
+      todaySubmissions: this.getTodaySubmissionCount(guildId, discordUserId),
       dailyLimit: dailySubmissionLimit,
     };
   }
@@ -295,6 +323,17 @@ export class SubmissionService {
         return 'Please include only one X post URL.';
       case 'INVALID_STATUS_URL':
         return 'The URL must be a valid X status URL.';
+    }
+  }
+
+  private parserDiagnostic(reason: 'NO_URL' | 'MULTIPLE_URLS' | 'INVALID_STATUS_URL'): string {
+    switch (reason) {
+      case 'NO_URL':
+        return 'no valid X URL';
+      case 'MULTIPLE_URLS':
+        return 'multiple X URLs';
+      case 'INVALID_STATUS_URL':
+        return 'unsupported URL format';
     }
   }
 }

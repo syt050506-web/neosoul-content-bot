@@ -1,25 +1,26 @@
 import { EmbedBuilder, Events, type Message } from 'discord.js';
+import { GuildSettingsService } from '../services/GuildSettingsService.js';
 import { SubmissionService, type SubmissionResult } from '../services/SubmissionService.js';
 import type { DiscordEvent } from '../types/event.js';
 import { logger } from '../utils/logger.js';
 
 const submissionService = new SubmissionService();
+const settingsService = new GuildSettingsService();
 
 export const createSubmissionEmbed = (
   result: Exclude<SubmissionResult, { outcome: 'IGNORED' }>,
 ): EmbedBuilder => {
-  if (result.outcome === 'APPROVED') {
+  if (result.outcome === 'PENDING') {
     return new EmbedBuilder()
-      .setColor(0x57f287)
-      .setTitle('✅ Submission Approved')
+      .setColor(0xfee75c)
+      .setTitle('✅ Submission received. Status: Pending Review.')
       .addFields(
-        { name: 'Points Earned', value: `+${result.pointsEarned}`, inline: true },
         {
           name: "Today's Submissions",
           value: `${result.todaySubmissions}/${result.dailyLimit}`,
           inline: true,
         },
-        { name: 'X Username', value: 'matched', inline: true },
+        { name: 'X Username', value: result.xUsername, inline: true },
       );
   }
 
@@ -38,7 +39,19 @@ export const createSubmissionEmbed = (
 };
 
 export const handleSubmissionMessage = async (message: Message): Promise<void> => {
+  if (message.author.bot) return;
+
   try {
+    const settings = message.guildId ? settingsService.find(message.guildId) : null;
+    if (!settings?.submissionChannelId || settings.submissionChannelId !== message.channelId) {
+      return;
+    }
+
+    logger.info(`Submission-channel message received: ${message.id}.`);
+    logger.info(`Configured channel ID: ${settings.submissionChannelId}.`);
+    logger.info(`Actual channel ID: ${message.channelId}.`);
+    logger.info(`Raw message content: ${message.content}.`);
+
     const result = submissionService.process({
       messageId: message.id,
       guildId: message.guildId,
@@ -50,10 +63,31 @@ export const handleSubmissionMessage = async (message: Message): Promise<void> =
       hasEmbeds: message.embeds.length > 0,
     });
 
-    if (result.outcome === 'IGNORED') return;
-    await message.reply({ embeds: [createSubmissionEmbed(result)] });
+    if (result.outcome === 'IGNORED') {
+      logger.info('Submission ignored: message is not eligible for processing.');
+      return;
+    }
+    if (result.outcome === 'PENDING') {
+      logger.info(`Submission saved: ${result.submissionId}.`);
+      try {
+        await message.reply('✅ Submission received. Status: Pending Review.');
+      } catch (error) {
+        logger.error('Submission reply failed: Discord permission/API error.', error);
+      }
+      return;
+    }
+    try {
+      await message.reply(result.reason);
+    } catch (error) {
+      logger.error('Submission reply failed: Discord permission/API error.', error);
+    }
   } catch (error) {
-    logger.error('Failed to process an X submission.', error);
+    logger.error('Submission failed: database error.', error);
+    try {
+      await message.reply('❌ The submission could not be saved. Please try again.');
+    } catch (replyError) {
+      logger.error('Submission reply failed: Discord permission/API error.', replyError);
+    }
   }
 };
 

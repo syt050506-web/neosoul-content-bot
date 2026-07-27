@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, test } from 'node:test';
 import Database from 'better-sqlite3';
+import type { Message } from 'discord.js';
+import { initializeDatabase } from '../src/database/index.js';
 import { schema } from '../src/database/schema.js';
-import { createSubmissionEmbed } from '../src/events/messageCreate.js';
+import { createSubmissionEmbed, handleSubmissionMessage } from '../src/events/messageCreate.js';
 import { ParserService } from '../src/services/ParserService.js';
-import { PointService } from '../src/services/PointService.js';
 import {
   SubmissionService,
   USERNAME_MISMATCH_REASON,
@@ -84,26 +85,25 @@ describe('SubmissionService integration', () => {
       )
       .get() as AggregateRow;
 
-  test('approves a valid submission, awards exactly one point, and builds the embed', () => {
+  test('saves a valid submission as pending without awarding points', () => {
     const result = service.process(createMessage('message-1', '1001'));
 
     assert.deepEqual(result, {
-      outcome: 'APPROVED',
+      outcome: 'PENDING',
+      submissionId: 1,
       todaySubmissions: 1,
       dailyLimit: 3,
       xUsername: 'MatchedUser',
-      pointsEarned: 1,
     });
     assert.deepEqual(aggregates(), {
       submissions: 1,
-      ledgerEntries: 1,
-      points: 1,
+      ledgerEntries: 0,
+      points: 0,
     });
-    assert.equal(database.prepare('SELECT status FROM submissions').pluck().get(), 'APPROVED');
+    assert.equal(database.prepare('SELECT status FROM submissions').pluck().get(), 'PENDING');
 
     const embed = createSubmissionEmbed(result).toJSON();
-    assert.equal(embed.title, '✅ Submission Approved');
-    assert.ok(embed.fields?.some(({ name, value }) => name === 'Points Earned' && value === '+1'));
+    assert.equal(embed.title, '✅ Submission received. Status: Pending Review.');
     assert.ok(
       embed.fields?.some(({ name, value }) => name === "Today's Submissions" && value === '1/3'),
     );
@@ -116,29 +116,19 @@ describe('SubmissionService integration', () => {
     assert.equal(result.outcome, 'REJECTED');
     assert.deepEqual(aggregates(), {
       submissions: 1,
-      ledgerEntries: 1,
-      points: 1,
+      ledgerEntries: 0,
+      points: 0,
     });
   });
 
-  test('ignores a repeated Discord message event', () => {
+  test('rejects a repeated Discord message event with a user-facing result', () => {
     service.process(createMessage('message-1', '1001'));
     const result = service.process(createMessage('message-1', '1001'));
 
-    assert.deepEqual(result, { outcome: 'IGNORED' });
-    assert.deepEqual(aggregates(), {
-      submissions: 1,
-      ledgerEntries: 1,
-      points: 1,
-    });
-  });
-
-  test('stores a username mismatch as rejected and consumes one daily slot', () => {
-    const result = service.process(createMessage('message-1', '1001', 'SomeoneElse'));
-
     assert.deepEqual(result, {
       outcome: 'REJECTED',
-      reason: USERNAME_MISMATCH_REASON,
+      code: 'DUPLICATE_MESSAGE',
+      reason: 'This Discord message has already been submitted.',
       todaySubmissions: 1,
       dailyLimit: 3,
     });
@@ -147,28 +137,45 @@ describe('SubmissionService integration', () => {
       ledgerEntries: 0,
       points: 0,
     });
-    assert.equal(database.prepare('SELECT status FROM submissions').pluck().get(), 'REJECTED');
+  });
+
+  test('rejects a username mismatch without saving or consuming a daily slot', () => {
+    const result = service.process(createMessage('message-1', '1001', 'SomeoneElse'));
+
+    assert.deepEqual(result, {
+      outcome: 'REJECTED',
+      code: 'USERNAME_MISMATCH',
+      reason: USERNAME_MISMATCH_REASON,
+      todaySubmissions: 0,
+      dailyLimit: 3,
+    });
+    assert.deepEqual(aggregates(), {
+      submissions: 0,
+      ledgerEntries: 0,
+      points: 0,
+    });
   });
 
   test('rejects a fourth daily submission without storing or rewarding it', () => {
     for (let index = 1; index <= 3; index += 1) {
       assert.equal(
         service.process(createMessage(`message-${index}`, `100${index}`)).outcome,
-        'APPROVED',
+        'PENDING',
       );
     }
 
     const result = service.process(createMessage('message-4', '1004'));
     assert.deepEqual(result, {
       outcome: 'REJECTED',
+      code: 'DAILY_LIMIT',
       reason: "You have reached today's limit of 3 submissions.",
       todaySubmissions: 3,
       dailyLimit: 3,
     });
     assert.deepEqual(aggregates(), {
       submissions: 3,
-      ledgerEntries: 3,
-      points: 3,
+      ledgerEntries: 0,
+      points: 0,
     });
   });
 
@@ -181,51 +188,34 @@ describe('SubmissionService integration', () => {
       )
       .run(GUILD_ID);
 
-    const approved = service.process(createMessage('message-1', '1001'));
-    assert.deepEqual(approved, {
-      outcome: 'APPROVED',
+    const pending = service.process(createMessage('message-1', '1001'));
+    assert.deepEqual(pending, {
+      outcome: 'PENDING',
+      submissionId: 1,
       todaySubmissions: 1,
       dailyLimit: 1,
       xUsername: 'MatchedUser',
-      pointsEarned: 7,
     });
 
     const rejected = service.process(createMessage('message-2', '1002'));
     assert.deepEqual(rejected, {
       outcome: 'REJECTED',
+      code: 'DAILY_LIMIT',
       reason: "You have reached today's limit of 1 submissions.",
       todaySubmissions: 1,
       dailyLimit: 1,
     });
     assert.deepEqual(aggregates(), {
       submissions: 1,
-      ledgerEntries: 1,
-      points: 7,
-    });
-  });
-
-  test('rolls back the submission when the ledger insert fails', () => {
-    class FailingPointService extends PointService {
-      public override addSubmissionPoints(): void {
-        throw new Error('simulated ledger failure');
-      }
-    }
-
-    const failingService = new SubmissionService(
-      database,
-      new ParserService(),
-      new FailingPointService(database),
-    );
-
-    assert.throws(
-      () => failingService.process(createMessage('message-1', '1001')),
-      /simulated ledger failure/,
-    );
-    assert.deepEqual(aggregates(), {
-      submissions: 0,
       ledgerEntries: 0,
       points: 0,
     });
+  });
+
+  test('does not require an X embed preview to save a submission', () => {
+    const result = service.process({ ...createMessage('message-1', '1001'), hasEmbeds: false });
+    assert.equal(result.outcome, 'PENDING');
+    assert.equal(database.prepare('SELECT status FROM submissions').pluck().get(), 'PENDING');
   });
 
   test('serializes two submissions when only one daily slot remains', async () => {
@@ -237,11 +227,73 @@ describe('SubmissionService integration', () => {
       Promise.resolve().then(() => service.process(createMessage('message-4', '1004'))),
     ]);
 
-    assert.deepEqual([first.outcome, second.outcome].sort(), ['APPROVED', 'REJECTED']);
+    assert.deepEqual([first.outcome, second.outcome].sort(), ['PENDING', 'REJECTED']);
     assert.deepEqual(aggregates(), {
       submissions: 3,
-      ledgerEntries: 3,
-      points: 3,
+      ledgerEntries: 0,
+      points: 0,
     });
   });
+});
+
+test('parser accepts every supported X/Twitter status URL host from message content', () => {
+  const parser = new ParserService();
+  for (const url of [
+    'https://x.com/username/status/123',
+    'https://www.x.com/username/status/123',
+    'https://twitter.com/username/status/123',
+    'https://mobile.twitter.com/username/status/123',
+  ]) {
+    assert.deepEqual(parser.parseXPost(`proof: ${url}`), {
+      ok: true,
+      post: { username: 'username', postId: '123', originalUrl: url },
+    });
+  }
+});
+
+test('messageCreate handler saves and replies to an X URL in the configured channel', async () => {
+  const appDatabase = initializeDatabase();
+  const testSuffix = `${process.pid}-${Date.now()}`;
+  const guildId = `handler-guild-${testSuffix}`;
+  const channelId = `handler-channel-${testSuffix}`;
+  const userId = `handler-user-${testSuffix}`;
+  appDatabase
+    .prepare(
+      `INSERT INTO guild_settings (
+         guild_id, submission_channel_id, daily_submission_limit, points_per_submission
+       ) VALUES (?, ?, 3, 1)`,
+    )
+    .run(guildId, channelId);
+  appDatabase
+    .prepare(
+      `INSERT INTO x_bindings (guild_id, discord_user_id, x_username)
+       VALUES (?, ?, ?)`,
+    )
+    .run(guildId, userId, 'MatchedUser');
+
+  const replies: unknown[] = [];
+  const message = {
+    id: 'handler-message',
+    guildId,
+    channelId,
+    content: 'https://x.com/MatchedUser/status/999001',
+    author: { id: userId, bot: false },
+    webhookId: null,
+    embeds: [],
+    reply: (reply: unknown) => {
+      replies.push(reply);
+      return Promise.resolve();
+    },
+  } as unknown as Message;
+
+  await handleSubmissionMessage(message);
+
+  assert.deepEqual(replies, ['✅ Submission received. Status: Pending Review.']);
+  assert.equal(
+    appDatabase
+      .prepare('SELECT status FROM submissions WHERE guild_id = ? AND message_id = ?')
+      .pluck()
+      .get(guildId, message.id),
+    'PENDING',
+  );
 });
