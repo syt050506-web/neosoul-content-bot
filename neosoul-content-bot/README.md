@@ -159,6 +159,31 @@ unexpected crashes where the SQLite WAL files are still present, back up the
 whole data directory or use SQLite's online backup API rather than copying only
 the main database file.
 
+### Update the existing DigitalOcean systemd deployment
+
+The existing `neosoul-bot` Droplet runs this project from
+`/root/neosoul-content-bot/neosoul-content-bot` as
+`neosoul-content-bot.service`. Use its current service and database for this
+deployment. The separate Telegram service has its own working directory.
+
+`scripts/deploy-wallets.sh` targets this specific server layout and the verified
+wallet implementation commit. Run it as root from the Droplet Console after
+fetching the `codex/wallet-bindings` branch. It rejects tracked local changes,
+checks the runtime version and service process cleanup, locates the database from
+the service environment or local dotenv configuration, and preserves a SQLite
+backup plus the old dependencies and build before updating. Untracked files and
+local credential files are retained. It installs frozen dependencies, builds with
+a bounded heap, runs the tests serially for the 1 GiB server, and requires new
+command-registration and authenticated-ready journal messages. A failed update
+restores the previous code, dependencies and build and restarts the original
+service. The live database is retained during rollback so new submissions are not
+discarded. Backups are private directories under
+`/root/neosoul-content-bot-backup.*`.
+
+The script is prepared for execution on the server; local syntax and non-root
+guard checks do not establish a completed remote deployment. After it succeeds,
+complete the live wallet and export checks in Discord.
+
 ## Scripts
 
 - `npm run dev` — run the bot in watch mode
