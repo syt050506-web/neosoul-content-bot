@@ -1,0 +1,23 @@
+name: neosoul-content-bot
+
+services:
+  bot:
+    build: .
+    image: neosoul-content-bot:local
+    init: true
+    restart: unless-stopped
+    environment:
+      DISCORD_TOKEN: ${DISCORD_TOKEN:?Configure this bot's DISCORD_TOKEN securely}
+      DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID:?Configure this bot's DISCORD_CLIENT_ID}
+      DATABASE_PATH: /app/data/neosoul.sqlite
+      NODE_ENV: production
+    volumes:
+      - wallet-data:/app/data
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+
+volumes:
+  wallet-data:

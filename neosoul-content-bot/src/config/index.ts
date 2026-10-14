@@ -17,7 +17,10 @@ export const config = Object.freeze({
     clientId: requireEnvironmentVariable('DISCORD_CLIENT_ID'),
   },
   database: {
-    path: path.resolve(process.env.DATABASE_PATH ?? './data/neosoul.sqlite'),
+    path:
+      process.env.DATABASE_PATH === ':memory:'
+        ? ':memory:'
+        : path.resolve(process.env.DATABASE_PATH ?? './data/neosoul.sqlite'),
   },
   environment: process.env.NODE_ENV ?? 'development',
 });

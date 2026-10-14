@@ -22,6 +22,25 @@ export const schema = `
     FOREIGN KEY (guild_id) REFERENCES guild_settings(guild_id) ON DELETE CASCADE
   );
 
+  CREATE TABLE IF NOT EXISTS wallet_bindings (
+    discord_user_id TEXT PRIMARY KEY NOT NULL,
+    guild_id TEXT NOT NULL,
+    discord_username TEXT NOT NULL,
+    discord_display_name TEXT NOT NULL,
+    wallet_address TEXT NOT NULL UNIQUE
+      CHECK (
+        length(wallet_address) = 42
+        AND substr(wallet_address, 1, 2) = '0x'
+        AND substr(wallet_address, 3) NOT GLOB '*[^0-9a-f]*'
+        AND wallet_address != '0x0000000000000000000000000000000000000000'
+      ),
+    bound_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    FOREIGN KEY (guild_id) REFERENCES guild_settings(guild_id) ON DELETE RESTRICT
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_wallet_bindings_guild
+    ON wallet_bindings(guild_id, bound_at, discord_user_id);
+
   CREATE TABLE IF NOT EXISTS submissions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     guild_id TEXT NOT NULL,

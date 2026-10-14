@@ -1,0 +1,13 @@
+node_modules
+dist
+.git
+.env
+.env.*
+data
+:memory:
+tests
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+*.log
