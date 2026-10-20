@@ -189,7 +189,7 @@ def inspect_docker(roots):
     output = run(["docker", "inspect", "--format", template, *listing.stdout.split()]).stdout
     records = [json.loads(line) for line in output.splitlines()]
     targets = []
-    patterns = ("evoevo", "guardian", "neosoul-content", "neosoul-growth", "neosoul-bsc", "bsc-bot")
+    patterns = ("evoevo", "neosoul-content", "neosoul-growth", "neosoul-bsc", "bsc-bot")
     for record in records:
         labels = record.get("labels") or {}
         workdir = labels.get("com.docker.compose.project.working_dir", "")

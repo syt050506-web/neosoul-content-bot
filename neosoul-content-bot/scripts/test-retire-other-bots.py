@@ -151,6 +151,14 @@ class RetirementSafetyTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "shared with a retained container"):
                     retirement.inspect_docker(retirement.REMOVE_ROOTS)
 
+    def test_unrelated_guardian_container_is_not_a_bot_removal_target(self):
+        record = {"id": "security", "image": "security-guardian", "name": "/guardian-agent", "labels": {}, "mounts": []}
+        def fake_run(command, check=True):
+            output = "security\n" if command[1] == "ps" else json.dumps(record)
+            return subprocess.CompletedProcess(command, 0, output, "")
+        with patch.object(retirement.shutil, "which", return_value="/usr/bin/docker"), patch.object(retirement, "run", side_effect=fake_run):
+            self.assertEqual(retirement.inspect_docker(retirement.REMOVE_ROOTS), ([], []))
+
     def test_private_backup_preserves_untracked_data_and_does_not_follow_symlinks(self):
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)
