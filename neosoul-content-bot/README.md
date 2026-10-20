@@ -254,15 +254,13 @@ deployment paths. An inert, verified system tmux server is preserved; its pane
 processes are still checked for active workloads. Local checks are
 `python3 -B scripts/test-retire-dragon.py`.
 
-`scripts/clear-discord-bots.py` is restricted to the identified
-`NeoSoul_Official` community. It previews by default. With `--apply`, it requires
-the actual Kick Members permission and role hierarchy, rechecks each target's
-bot flag, removes bot accounts only, verifies no other bots remain, then makes
-the cleanup bot leave last. Credentials stay in a root-only temporary file on
-the user's server; the report contains no credentials. It does not change
-ordinary members, channels or server roles. Run
-`python3 -B scripts/test-clear-discord-bots.py` for scope, human-member protection,
-permission, role hierarchy and final-leave checks.
+The final confirmed Discord scope is only the three accounts previously
+deployed on the user's DigitalOcean server: NeoSoul Bot, NeoSoul Content Bot and
+EVOEVO Guardian. Each account leaves `NeoSoul_Official` using its own credentials
+and the `/users/@me/guilds/{guild_id}` endpoint. Third-party bots, human members,
+channels and roles are unchanged. No Kick Members permission or role change is
+needed. The broader community-removal helper was withdrawn after the user
+clarified this scope. Sign-in bot development waits for the user's rules.
 
 ## Scripts
 
