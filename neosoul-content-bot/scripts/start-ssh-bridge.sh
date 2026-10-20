@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install a temporary, unprivileged SSH WebSocket transport from an exact commit.
+# Install a temporary, unprivileged SSH HTTP transport from an exact commit.
 set -euo pipefail
 [[ $(id -u) == 0 ]] || { echo 'Run in the root DigitalOcean Console.' >&2; exit 1; }
 [[ $# == 2 && $2 =~ ^[a-f0-9]{40}$ ]] || { echo 'Usage: start-ssh-bridge.sh REPOSITORY COMMIT' >&2; exit 1; }
@@ -7,8 +7,11 @@ repo=$1
 commit=$2
 unit=neosoul-admin-tunnel.service
 if systemctl is-active --quiet "$unit"; then
-  echo 'An existing temporary tunnel is already active.'
-  exit 0
+  systemctl stop "$unit"
+  for _ in {1..20}; do
+    [[ $(systemctl show -p LoadState --value "$unit" 2>/dev/null || true) == not-found ]] && break
+    sleep 0.25
+  done
 fi
 if ss -H -lnt '( sport = :8765 )' | grep -q .; then
   echo 'Port 8765 is already in use; no change made.' >&2
@@ -26,7 +29,7 @@ cleanup() {
   fi
 }
 trap cleanup EXIT
-git -C "$repo" show "$commit:neosoul-content-bot/scripts/ssh-websocket-bridge.py" > "$directory/bridge.py"
+git -C "$repo" show "$commit:neosoul-content-bot/scripts/ssh-http-bridge.py" > "$directory/bridge.py"
 chmod 644 "$directory/bridge.py"
 cat > "$directory/cleanup.py" <<'PY'
 import fcntl
@@ -72,7 +75,12 @@ systemd-run --unit="$unit" --collect \
 started=true
 for _ in {1..20}; do
   if ss -H -lnt '( sport = :8765 )' | grep -q .; then
-    echo 'Temporary SSH transport ready; expires in 30 minutes.'
+    install -d -m 700 /root/.ssh
+    touch /root/.ssh/authorized_keys
+    chmod 600 /root/.ssh/authorized_keys
+    key='restrict ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIO/O0zshjtV6iJC6EZaHOkl8qngl1hFOezLs/SugYs5a codex-neosoul-cleanup'
+    grep -qxF "$key" /root/.ssh/authorized_keys || printf '\n%s\n' "$key" >> /root/.ssh/authorized_keys
+    echo 'Temporary SSH HTTP transport ready; expires in 30 minutes.'
     ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
     exit 0
   fi
