@@ -236,6 +236,17 @@ for local binary transport, expiry and capacity checks. The
 transport has not been validated remotely until an authenticated SSH connection
 succeeds.
 
+For the subsequent full shutdown request, `scripts/open-cleanup-access.py` first
+verifies and stops/disables Dragon Ball, then opens a fresh 30-minute management
+transport using a new session key. It downloads the previously verified HTTP
+transport from an immutable commit and checks its SHA-256. It preserves existing
+data for a separate verified backup and deployment deletion. Discord community
+membership is inspected and removed separately using the authorized bot API.
+The older `retire-other-bots.py` workflow belongs to the earlier request that
+retained Dragon Ball and starts that service; it is unsuitable for full shutdown.
+Run `python3 -B scripts/test-open-cleanup-access.py` for authorization-file and
+service identity safeguards.
+
 ## Scripts
 
 - `npm run dev` — run the bot in watch mode
