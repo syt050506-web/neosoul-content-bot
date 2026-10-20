@@ -218,6 +218,22 @@ Run the local deletion-protection checks with:
 python3 -B scripts/test-retire-other-bots.py
 ```
 
+When the management environment supports WebSockets but cannot carry native SSH,
+`scripts/start-ssh-bridge.sh REPOSITORY COMMIT` installs a temporary transport
+from an immutable commit. It runs as `nobody` and forwards port 8765 at
+`/neosoul-ssh` only to `127.0.0.1:22`. SSH still supplies authentication,
+encryption and host identity verification. The client must pin the host
+fingerprint obtained from DigitalOcean Console. This is a transport, not an
+HTTP command execution API.
+
+The transient `neosoul-admin-tunnel.service` expires after 30 minutes. Its stop
+hook removes the temporary files, any UFW rule it added, and the specific
+`codex-neosoul-cleanup` session public key. Stop the unit after maintenance to
+revoke access immediately. Run `python3 -B scripts/test-ssh-websocket-bridge.py`
+for local binary transport, fragmentation and malformed-frame checks. The
+transport has not been validated remotely until an authenticated SSH connection
+succeeds.
+
 ## Scripts
 
 - `npm run dev` — run the bot in watch mode
