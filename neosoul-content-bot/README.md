@@ -184,6 +184,40 @@ The script is prepared for execution on the server; local syntax and non-root
 guard checks do not establish a completed remote deployment. After it succeeds,
 complete the live wallet and export checks in Discord.
 
+### Retire the other bots and retain Dragon Ball
+
+The server-specific `scripts/retire-other-bots.py` keeps
+`neosoul-discord-bot.service` and `/root/NeoSoul-Discord-Bot`. It starts the retained
+service and requires its authenticated Discord login before retiring Growth Bot,
+Content Bot, the old EVOEVO Guardian deployment and the specified old Content Bot
+backup. It operates on server deployments; repository hosting and Discord
+application registrations are separate.
+
+Fetch the cleanup branch, copy the script into a root-owned `mktemp` file, change
+to `/root`, and run it using Python 3 from the DigitalOcean Console. The executing
+script must remain outside the Content Bot directory because that directory is a
+removal target. `--dry-run` prints the plan without changing files or services.
+
+The script checks retained-service dependencies and database paths, refuses
+overlapping paths and shared Docker volumes, preserves complete project contents
+and service definitions in a root-only archive, verifies the archive, and then
+removes the retired service definitions and deployment directories. Dedicated
+retired containers and volumes are also backed up and removed when present.
+System services such as TPM and certificate renewal are outside its selection.
+An unresolved shared dependency or unmanaged bot process stops the cleanup.
+Failures before deletion restore the retired services' previous running state.
+
+The recovery directory is `/root/retired-bots-*`, containing `bots.tar.gz` and a
+manifest with its SHA-256. The archive includes application configuration and
+databases and is restricted to root. It is retained for recovery after the live
+deployments have been removed.
+
+Run the local deletion-protection checks with:
+
+```sh
+python3 -B scripts/test-retire-other-bots.py
+```
+
 ## Scripts
 
 - `npm run dev` — run the bot in watch mode
