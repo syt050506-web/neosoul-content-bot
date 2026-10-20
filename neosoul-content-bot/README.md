@@ -247,6 +247,23 @@ retained Dragon Ball and starts that service; it is unsuitable for full shutdown
 Run `python3 -B scripts/test-open-cleanup-access.py` for authorization-file and
 service identity safeguards.
 
+`scripts/retire-dragon.py` handles the final deployment deletion: it leaves the
+bot stopped, verifies its identity, archives the complete source/environment/data
+and service definition privately, validates the archive, then removes the exact
+deployment paths. An inert, verified system tmux server is preserved; its pane
+processes are still checked for active workloads. Local checks are
+`python3 -B scripts/test-retire-dragon.py`.
+
+`scripts/clear-discord-bots.py` is restricted to the identified
+`NeoSoul_Official` community. It previews by default. With `--apply`, it requires
+the actual Kick Members permission and role hierarchy, rechecks each target's
+bot flag, removes bot accounts only, verifies no other bots remain, then makes
+the cleanup bot leave last. Credentials stay in a root-only temporary file on
+the user's server; the report contains no credentials. It does not change
+ordinary members, channels or server roles. Run
+`python3 -B scripts/test-clear-discord-bots.py` for scope, human-member protection,
+permission, role hierarchy and final-leave checks.
+
 ## Scripts
 
 - `npm run dev` — run the bot in watch mode
