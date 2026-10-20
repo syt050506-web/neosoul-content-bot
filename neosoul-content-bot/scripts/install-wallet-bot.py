@@ -93,7 +93,7 @@ class Discord:
             headers={
                 "Authorization": "Bot " + self.token,
                 "Content-Type": "application/json",
-                "User-Agent": "NeoSoulWalletInstaller/1.0",
+                "User-Agent": "DiscordBot (https://github.com/syt050506-web/Discord-NeoSoul-Bot, 1.0)",
             },
             method=method,
         )
