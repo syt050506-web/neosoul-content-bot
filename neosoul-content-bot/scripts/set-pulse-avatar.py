@@ -1,4 +1,4 @@
-"""Update only the deployed Pulse bot's avatar, using its local secure config.
+"""Apply the black-orange Pulse avatar, using the bot's local secure config.
 
 Run with /opt/dna-pulse/.venv/bin/python. No service restart or SSH setup needed.
 """
@@ -16,9 +16,9 @@ from pathlib import Path
 BOT_ID = "1529862783976341556"
 ASSET_URL = (
     "https://raw.githubusercontent.com/syt050506-web/neosoul-content-bot/"
-    "codex/retire-other-bots/neosoul-content-bot/assets/dna-pulse-avatar.png"
+    "codex/retire-other-bots/neosoul-content-bot/assets/dna-pulse-avatar-black-orange.png"
 )
-ASSET_SHA256 = "d621c5387426cba974a8aebd20e5e3ba10ce74519b13f9708b7b0472935c6d8c"
+ASSET_SHA256 = "0df8fd94c24093a67cfb02b893059836b092890eb8d2ee35e4e61372716e6e76"
 API_URL = "https://discord.com/api/v10/users/@me"
 MAX_IMAGE_BYTES = 4 * 1024 * 1024
 
@@ -74,6 +74,7 @@ def main():
     record = {
         "bot_id": BOT_ID,
         "old_avatar": before.get("avatar"),
+        "theme": "black-orange",
         "requested_sha256": ASSET_SHA256,
     }
     record_path = history / f"{stamp}.json"
@@ -88,7 +89,7 @@ def main():
     record["new_avatar"] = verified["avatar"]
     record["verified_at"] = datetime.now(UTC).isoformat()
     record_path.write_text(json.dumps(record, indent=2) + "\n")
-    print("NeoSoul Pulse avatar updated and verified. No restart was needed.")
+    print("NeoSoul Pulse black-orange avatar updated and verified. No restart was needed.")
 
 
 if __name__ == "__main__":
