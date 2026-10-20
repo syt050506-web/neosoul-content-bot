@@ -19,6 +19,15 @@ SPEC.loader.exec_module(retirement)
 
 
 class RetirementSafetyTests(unittest.TestCase):
+    def test_inventory_skips_uninstantiated_templates_and_keeps_running_instances(self):
+        files = "getty@.service static\nguardian@.service disabled\nneosoul-bot.service enabled\n"
+        loaded = "guardian@legacy.service loaded active running Guardian\nneosoul-bot.service loaded active running Growth\n"
+        with patch.object(retirement, "run", side_effect=[
+            subprocess.CompletedProcess([], 0, files, ""),
+            subprocess.CompletedProcess([], 0, loaded, ""),
+        ]):
+            self.assertEqual(retirement.service_names(), ["guardian@legacy.service", "neosoul-bot.service"])
+
     def test_scope_preserves_dragon_system_units_and_unrelated_apps(self):
         roots = retirement.REMOVE_ROOTS
         records = {

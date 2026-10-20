@@ -52,6 +52,19 @@ def properties(units, fields):
     return result
 
 
+def service_names():
+    files = run(["systemctl", "list-unit-files", "--type=service", "--no-legend", "--no-pager"]).stdout
+    loaded = run(["systemctl", "list-units", "--all", "--type=service", "--plain", "--no-legend", "--no-pager"]).stdout
+    # Uninstantiated templates cannot be queried with systemctl show. Include
+    # loaded instances and transient services, which list-unit-files can omit.
+    return sorted({
+        line.split()[0]
+        for line in (files + "\n" + loaded).splitlines()
+        if line.strip() and line.split()[0].endswith(".service")
+        and not line.split()[0].endswith("@.service")
+    })
+
+
 def choose_units(records, roots):
     result = {}
     for name, record in records.items():
@@ -250,8 +263,7 @@ def main():
         raise RuntimeError("Dragon Ball source identity needs inspection before deletion.")
     roots = tuple(root for root in REMOVE_ROOTS if root.exists() or root.is_symlink())
     guard_roots(roots)
-    listing = run(["systemctl", "list-unit-files", "--type=service", "--no-legend", "--no-pager"]).stdout
-    names = sorted({line.split()[0] for line in listing.splitlines() if line.strip()})
+    names = service_names()
     records = properties(names, ["Id", "LoadState", "WorkingDirectory", "ExecStart", "FragmentPath", "DropInPaths", "ActiveState", "UnitFileState", "KillMode"])
     keep = properties([KEEP_UNIT], ["Id", "WorkingDirectory", "ExecStart", "ExecStartPre", "ExecStartPost", "ExecStop", "ExecReload", "EnvironmentFiles", "Environment", "FragmentPath", "RootDirectory", "BindPaths", "BindReadOnlyPaths", "Requires", "Requisite", "Wants", "BindsTo", "PartOf", "Upholds"])[KEEP_UNIT]
     if keep.get("WorkingDirectory") and not within(Path(keep["WorkingDirectory"]).resolve(), KEEP_ROOT):
